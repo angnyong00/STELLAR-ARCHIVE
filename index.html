@@ -792,12 +792,12 @@ html, body {
 
     /* 9. 로컬 이미지 소스 바인딩 */
     function coverClick() {
-      if(curIdx !== -1) document.getElementById('f-in').click();
+      if(editMode || curIdx !== -1) document.getElementById('f-in').click();
     }
 
     function fileChg(e) {
       const file = e.target.files[0];
-      if(!file || curIdx === -1) return;
+      if(!file) return;
       
       const reader = new FileReader();
       reader.onload = function(evt) {
@@ -805,9 +805,14 @@ html, body {
         document.getElementById('paper-img').src = res;
         document.getElementById('paper-img').style.display = 'block';
         document.getElementById('paper-empty').style.display = 'none';
-        localStorage.setItem(`stellar_media_${frames[curIdx].id}`, res);
+        if(curIdx !== -1) {
+          localStorage.setItem(`stellar_media_${frames[curIdx].id}`, res);
+        } else {
+          localStorage.setItem('stellar_media_bg', res);
+        }
       };
       reader.readAsDataURL(file);
+      e.target.value = '';
     }
 
     /* 10. 오디오 전파 주파수 이퀄라이저 루프 */
