@@ -323,6 +323,22 @@ html, body {
   0% { width: 0; height: 0; opacity: 1; }
   100% { width: 50px; height: 50px; opacity: 0; }
 }
+
+#backup-section { display:none; padding: 6px 0; }
+.backup-label-st { font-size: 9px; color: var(--faint); letter-spacing: 3px; margin-bottom: 6px; font-family: 'Share Tech Mono', monospace; }
+.backup-row-st { display: flex; gap: 6px; }
+.btn-backup-st {
+    flex: 1; padding: 9px 6px;
+    background: transparent;
+    border: 1px solid var(--faint);
+    color: var(--faint);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 9px; letter-spacing: 2px;
+    cursor: none; transition: all 0.2s; text-align: center;
+    border-radius: 2px;
+}
+.btn-backup-st:hover { border-color: var(--accent); color: var(--star); background: var(--glow); }
+
 </style>
 </head>
 <body>
@@ -370,6 +386,15 @@ html, body {
           <span id="le" class="mlbl off">EDIT STATUS</span>
           <span id="lp" class="mlbl on">MONITORING</span>
           <button id="add-btn" class="ebtn" style="display:none;" onclick="addTrack()">+ ADD WAVE</button>
+
+          <div id="backup-section">
+            <div class="backup-label-st">// DATA BACKUP</div>
+            <div class="backup-row-st">
+              <button class="btn-backup-st" onclick="exportPlaylist()">⬇ EXPORT JSON</button>
+              <button class="btn-backup-st" onclick="document.getElementById('import-pick-st').click()">⬆ IMPORT JSON</button>
+            </div>
+            <input type="file" id="import-pick-st" accept=".json" style="display:none" onchange="importPlaylist(this)">
+          </div>
           <button id="edit-btn" class="ebtn" onclick="toggleEdit()">+ EDIT</button>
         </div>
       </div>
@@ -748,6 +773,7 @@ html, body {
         el.style.display = editMode ? 'flex' : 'none';
       });
       addBtn.style.display = editMode ? 'block' : 'none';
+      document.getElementById('backup-section').style.display = editMode ? 'block' : 'none';
       
       if(editMode) {
         btn.innerHTML = '✕ CLOSE'; btn.classList.add('on');
@@ -762,6 +788,38 @@ html, body {
         localStorage.setItem('stellar_playlist', JSON.stringify(frames));
       }
       playBeep(1100, 0.02);
+    }
+
+
+    /* ── EXPORT ── */
+    function exportPlaylist() {
+      const data = {
+        version: 1,
+        frames: frames.map(f => ({ title: f.title, artist: f.artist, yt: f.yt, id: f.id }))
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'stellar_backup.json'; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    /* ── IMPORT ── */
+    function importPlaylist(input) {
+      if (!input.files || !input.files[0]) return;
+      const reader = new FileReader();
+      reader.onload = e => {
+        try {
+          const data = JSON.parse(e.target.result);
+          if (!data.frames || !Array.isArray(data.frames)) { alert('올바른 백업 파일이 아니야!'); return; }
+          frames = data.frames.map((f, i) => ({ id: f.id || i+1, title: f.title||'', artist: f.artist||'', yt: f.yt||'' }));
+          localStorage.setItem('stellar_playlist', JSON.stringify(frames));
+          renderList();
+          alert('✓ 복원 완료! 트랙 ' + frames.length + '개');
+        } catch(err) { alert('파일 읽기 실패: ' + err.message); }
+      };
+      reader.readAsText(input.files[0]);
+      input.value = '';
     }
 
     function addTrack() {
