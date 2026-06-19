@@ -392,6 +392,7 @@ html, body {
             <div class="backup-row-st">
               <button class="btn-backup-st" onclick="exportPlaylist()">⬇ EXPORT JSON</button>
               <button class="btn-backup-st" onclick="document.getElementById('import-pick-st').click()">⬆ IMPORT JSON</button>
+              <button class="btn-backup-st" onclick="recompressAllImages()">🗜 이미지 압축</button>
             </div>
             <input type="file" id="import-pick-st" accept=".json" style="display:none" onchange="importPlaylist(this)">
           </div>
@@ -794,8 +795,12 @@ html, body {
     /* ── EXPORT ── */
     function exportPlaylist() {
       const data = {
-        version: 1,
-        frames: frames.map(f => ({ title: f.title, artist: f.artist, yt: f.yt, id: f.id }))
+        version: 2,
+        frames: frames.map(f => {
+          let media = null;
+          try { media = localStorage.getItem(`stellar_media_${f.id}`); } catch(e) {}
+          return { title: f.title, artist: f.artist, yt: f.yt, id: f.id, media };
+        })
       };
       const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
       const url = URL.createObjectURL(blob);
@@ -808,14 +813,27 @@ html, body {
     function importPlaylist(input) {
       if (!input.files || !input.files[0]) return;
       const reader = new FileReader();
-      reader.onload = e => {
+      reader.onload = async e => {
         try {
           const data = JSON.parse(e.target.result);
           if (!data.frames || !Array.isArray(data.frames)) { alert('올바른 백업 파일이 아니야!'); return; }
-          frames = data.frames.map((f, i) => ({ id: f.id || i+1, title: f.title||'', artist: f.artist||'', yt: f.yt||'' }));
+          let mediaCount = 0, mediaFail = 0;
+          const newFrames = [];
+          for (let i = 0; i < data.frames.length; i++) {
+            const f = data.frames[i];
+            const id = f.id || i+1;
+            if (f.media) {
+              let toStore = f.media;
+              try { toStore = await compressImage(f.media); } catch(err) {}
+              try { localStorage.setItem(`stellar_media_${id}`, toStore); mediaCount++; }
+              catch(err) { mediaFail++; console.warn('이미지 저장 실패 (용량 초과 가능):', id); }
+            }
+            newFrames.push({ id, title: f.title||'', artist: f.artist||'', yt: f.yt||'' });
+          }
+          frames = newFrames;
           localStorage.setItem('stellar_playlist', JSON.stringify(frames));
           renderList();
-          alert('✓ 복원 완료! 트랙 ' + frames.length + '개');
+          alert('✓ 복원 완료! 트랙 ' + frames.length + '개 (이미지 ' + mediaCount + '개' + (mediaFail ? `, 실패 ${mediaFail}개` : '') + ')');
         } catch(err) { alert('파일 읽기 실패: ' + err.message); }
       };
       reader.readAsText(input.files[0]);
@@ -867,19 +885,71 @@ html, body {
       if(curIdx !== -1) document.getElementById('f-in').click();
     }
 
+    /* 이미지 압축 — 큰 사진을 리사이즈 + JPEG 압축해서 localStorage 용량을 아껴줌 */
+    function compressImage(dataUrl, maxDim = 1000, quality = 0.8) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            if (width >= height) { height = Math.round(height * (maxDim / width)); width = maxDim; }
+            else { width = Math.round(width * (maxDim / height)); height = maxDim; }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width; canvas.height = height;
+          const cctx = canvas.getContext('2d');
+          cctx.drawImage(img, 0, 0, width, height);
+          try { resolve(canvas.toDataURL('image/jpeg', quality)); }
+          catch(err) { reject(err); }
+        };
+        img.onerror = reject;
+        img.src = dataUrl;
+      });
+    }
+
     function fileChg(e) {
       const file = e.target.files[0];
       if(!file || curIdx === -1) return;
       
       const reader = new FileReader();
-      reader.onload = function(evt) {
-        const res = evt.target.result;
+      reader.onload = async function(evt) {
+        const raw = evt.target.result;
+        let res = raw;
+        try { res = await compressImage(raw); } catch(err) { console.warn('이미지 압축 실패, 원본으로 저장:', err); }
         document.getElementById('paper-img').src = res;
         document.getElementById('paper-img').style.display = 'block';
         document.getElementById('paper-empty').style.display = 'none';
-        localStorage.setItem(`stellar_media_${frames[curIdx].id}`, res);
+        try {
+          localStorage.setItem(`stellar_media_${frames[curIdx].id}`, res);
+        } catch(err) {
+          alert('사진 저장 실패: 저장 공간이 부족해요. "이미지 압축" 버튼으로 기존 사진들을 줄이거나 일부 사진을 정리해보세요.');
+        }
       };
       reader.readAsDataURL(file);
+    }
+
+    /* 저장된 모든 사진을 한 번에 압축 — 이미 업로드된 큰 사진들 용량을 줄여줌 */
+    async function recompressAllImages() {
+      if (!confirm('저장된 모든 사진을 압축할까요? 트랙 수가 많으면 시간이 좀 걸려요.')) return;
+      let done = 0, skipped = 0, failed = 0;
+      for (const f of frames) {
+        const key = `stellar_media_${f.id}`;
+        let raw = null;
+        try { raw = localStorage.getItem(key); } catch(e) {}
+        if (!raw) { skipped++; continue; }
+        try {
+          const compressed = await compressImage(raw);
+          if (compressed.length < raw.length) localStorage.setItem(key, compressed);
+          done++;
+        } catch(err) { failed++; }
+      }
+      if (curIdx !== -1) {
+        try {
+          const cur = localStorage.getItem(`stellar_media_${frames[curIdx].id}`);
+          if (cur) document.getElementById('paper-img').src = cur;
+        } catch(e) {}
+      }
+      alert(`압축 완료! 처리 ${done}개 · 사진 없음 ${skipped}개 · 실패 ${failed}개`);
     }
 
     /* 10. 오디오 전파 주파수 이퀄라이저 루프 */
